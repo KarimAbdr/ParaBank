@@ -1,0 +1,56 @@
+name: UAT regression tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:        # "Run workflow" button in the Actions tab
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      # The application under test runs next to the tests, exactly like locally.
+      parabank:
+        image: parasoft/parabank:latest
+        ports:
+          - 8080:8080
+          - 9001:9001
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Install Playwright browser (Chromium + OS libraries)
+        run: >
+          mvn -B -q test-compile exec:java
+          -Dexec.classpathScope=test
+          -Dexec.mainClass=com.microsoft.playwright.CLI
+          -Dexec.args="install --with-deps chromium"
+
+      - name: Wait until ParaBank is up
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8080/parabank/index.htm > /dev/null && exit 0
+            sleep 2
+          done
+          echo "ParaBank did not start" && exit 1
+
+      - name: Run tests
+        run: mvn -B test
+
+      - name: Upload reports and Playwright traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            target/surefire-reports/
+            target/traces/
+            target/cucumber-report.html

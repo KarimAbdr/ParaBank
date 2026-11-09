@@ -1,0 +1,42 @@
+// The same pipeline for Jenkins (the CI server used by many enterprise teams).
+// Assumes an agent with Docker, JDK 21 and Maven configured as tools.
+pipeline {
+    agent any
+
+    tools {
+        jdk 'jdk21'
+        maven 'maven3'
+    }
+
+    parameters {
+        choice(name: 'TAGS', choices: ['', 'smoke', 'regression', 'api', 'db', 'bdd'],
+               description: 'JUnit tag to run (empty = everything)')
+    }
+
+    stages {
+        stage('Start application under test') {
+            steps {
+                sh 'docker run -d --rm --name parabank-ci -p 8080:8080 -p 9001:9001 parasoft/parabank:latest'
+                sh 'for i in $(seq 1 30); do curl -sf http://localhost:8080/parabank/index.htm && break; sleep 2; done'
+            }
+        }
+        stage('Install browser') {
+            steps {
+                sh 'mvn -B -q test-compile exec:java -Dexec.classpathScope=test -Dexec.mainClass=com.microsoft.playwright.CLI -Dexec.args="install chromium"'
+            }
+        }
+        stage('UAT tests') {
+            steps {
+                sh "mvn -B test ${params.TAGS ? "-Dgroups=${params.TAGS}" : ''}"
+            }
+        }
+    }
+
+    post {
+        always {
+            junit 'target/surefire-reports/*.xml'
+            archiveArtifacts artifacts: 'target/traces/**, target/cucumber-report.html', allowEmptyArchive: true
+            sh 'docker stop parabank-ci || true'
+        }
+    }
+}
